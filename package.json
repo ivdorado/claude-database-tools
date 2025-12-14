@@ -1,0 +1,51 @@
+{
+  "name": "claude-database-tools",
+  "version": "1.0.0",
+  "description": "SQL Server CLI and MCP server for Claude Code",
+  "author": "cyronius",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "sql-cli": "dist/cli/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyronius/claude-database-tools"
+  },
+  "keywords": [
+    "sql-server",
+    "mssql",
+    "claude",
+    "mcp",
+    "cli",
+    "database"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "cli": "node dist/cli/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "commander": "^14.0.2",
+    "dotenv": "^16.0.0",
+    "mssql": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/mssql": "^9.1.7",
+    "@types/node": "^22.19.1",
+    "typescript": "^5.0.0",
+    "vitest": "^2.1.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
