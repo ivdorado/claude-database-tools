@@ -3,6 +3,7 @@ import * as dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DeviceCodeCredential, type DeviceCodeInfo, type TokenCredential } from '@azure/identity';
+import { isMultiClientMode, getClientConnectionConfig } from './clients.js';
 
 // Get the directory where this file is located
 const __filename = fileURLToPath(import.meta.url);
@@ -12,6 +13,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 
 let globalSqlPool: sql.ConnectionPool | null = null;
+// Identifies which client globalSqlPool is currently connected to. 'default'
+// is used for the single-client (.env-based) mode.
+let currentClientId: string | null = null;
 let deviceCodeCredential: DeviceCodeCredential | null = null;
 
 // mssql deep-clones the connection config (via rfdc) before handing it to
@@ -45,7 +49,25 @@ async function getDeviceCodeCredential(): Promise<TokenCredential> {
   return { getToken: credential.getToken.bind(credential) };
 }
 
-export async function getSqlConfig(): Promise<sql.config> {
+export async function getSqlConfig(clientId?: string): Promise<sql.config> {
+  if (clientId) {
+    const client = getClientConnectionConfig(clientId);
+    return {
+      server: client.server,
+      database: client.database,
+      port: client.port ?? 1433,
+      user: client.user,
+      password: client.password,
+      options: {
+        encrypt: client.encrypt ?? false,
+        trustServerCertificate: client.trustServerCertificate ?? false,
+        enableArithAbort: true
+      },
+      connectionTimeout: parseInt(process.env.CONNECTION_TIMEOUT || '30') * 1000,
+      requestTimeout: parseInt(process.env.REQUEST_TIMEOUT || '60') * 1000
+    } as sql.config;
+  }
+
   const authType = process.env.SQL_AUTH_TYPE || 'sql';
 
   const baseConfig = {
@@ -79,17 +101,21 @@ export async function getSqlConfig(): Promise<sql.config> {
   };
 }
 
-export async function ensureSqlConnection(): Promise<sql.ConnectionPool> {
-  if (globalSqlPool && globalSqlPool.connected) {
+export async function ensureSqlConnection(clientId?: string): Promise<sql.ConnectionPool> {
+  const targetClientId = clientId ?? 'default';
+
+  if (globalSqlPool && globalSqlPool.connected && currentClientId === targetClientId) {
     return globalSqlPool;
   }
 
-  if (globalSqlPool && !globalSqlPool.connected) {
+  if (globalSqlPool) {
     await globalSqlPool.close();
+    globalSqlPool = null;
   }
 
-  const config = await getSqlConfig();
+  const config = await getSqlConfig(clientId);
   globalSqlPool = await sql.connect(config);
+  currentClientId = targetClientId;
   return globalSqlPool;
 }
 
@@ -104,6 +130,7 @@ export async function closeSqlConnection(): Promise<void> {
   if (globalSqlPool) {
     await globalSqlPool.close();
     globalSqlPool = null;
+    currentClientId = null;
   }
 }
 

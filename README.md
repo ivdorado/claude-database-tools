@@ -157,6 +157,37 @@ Restart Claude Code to load the MCP server.
 - `drop_table` - Drop tables
 - `execute_stored_proc` - Execute stored procedures
 
+### Multi-Client Mode
+
+By default the MCP server connects to a single SQL Server instance configured via `.env`/environment variables. To let one MCP server multiplex between several clients' SQL Server/Azure SQL instances, create a `clients.json` in the project root (copy `clients.example.json`):
+
+```json
+{
+  "clientA": {
+    "server": "clienta-sqlserver.database.windows.net",
+    "database": "ClientA_DB",
+    "user": "clienta_user",
+    "password": "clienta_password",
+    "port": 1433,
+    "encrypt": true,
+    "trustServerCertificate": false
+  },
+  "clientB": {
+    "server": "192.168.1.50",
+    "database": "ClientB_DB",
+    "user": "clientb_user",
+    "password": "clientb_password",
+    "port": 1433,
+    "encrypt": false,
+    "trustServerCertificate": true
+  }
+}
+```
+
+When `clients.json` exists and is non-empty, every SQL-facing tool gains a required `client` argument, and a new `list_clients` tool is exposed so Claude can discover which clients are configured. Claude will ask (or you can tell it) which client's database to query before running a tool.
+
+`clients.json` is gitignored — it holds plaintext credentials for every configured client, same as `.env`. This is a v1: the server keeps a single active connection and reconnects when the `client` argument changes, so it's meant for one conversation at a time, not concurrent multi-client traffic. A future iteration should move credentials to a secret store (e.g. Azure Key Vault) instead of a local file.
+
 ## Security
 
 - **SQL Injection Prevention**: SELECT queries are validated against dangerous keywords and patterns

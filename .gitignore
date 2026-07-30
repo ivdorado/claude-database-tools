@@ -9,6 +9,9 @@ dist/
 .env.local
 .env.*.local
 
+# Multi-client SQL connection config (contains credentials)
+clients.json
+
 # IDE
 .idea/
 .vscode/

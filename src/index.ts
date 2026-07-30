@@ -11,6 +11,8 @@ import {
 
 // Internal imports
 import { ensureSqlConnection } from "./core/connection.js";
+import { isMultiClientMode } from "./core/clients.js";
+import { ListClientsTool } from "./tools/ListClientsTool.js";
 import { ListTablesTool } from "./tools/ListTablesTool.js";
 import { DescribeTableTool } from "./tools/DescribeTableTool.js";
 import { ReadDataTool } from "./tools/ReadDataTool.js";
@@ -28,6 +30,7 @@ import { ExecuteStoredProcTool } from "./tools/ExecuteStoredProcTool.js";
 dotenv.config();
 
 // Initialize tools
+const listClientsTool = new ListClientsTool();
 const listTablesTool = new ListTablesTool();
 const describeTableTool = new DescribeTableTool();
 const readDataTool = new ReadDataTool();
@@ -57,10 +60,32 @@ const server = new Server(
 // Read READONLY env variable
 const isReadOnly = process.env.READONLY === "true";
 
+// In multi-client mode, every SQL-facing tool needs a 'client' argument so
+// the caller can pick which SQL Server instance to run against.
+function withClientParam(tool: any): any {
+  if (!isMultiClientMode()) {
+    return tool;
+  }
+  return {
+    ...tool,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        client: {
+          type: "string",
+          description: "Client identifier identifying which SQL Server instance to query. Call list_clients to see available options.",
+        },
+      },
+      required: [...(tool.inputSchema.required || []), "client"],
+    },
+  };
+}
+
 // Request handlers
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: isReadOnly
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const sqlTools = isReadOnly
     ? [listTablesTool, readDataTool, describeTableTool, getTableDdlTool, getTableAlterDdlTool]
     : [
         listTablesTool,
@@ -75,14 +100,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         getTableDdlTool,
         getTableAlterDdlTool,
         executeStoredProcTool
-      ],
-}));
+      ];
+
+  const tools = sqlTools.map(withClientParam);
+  if (isMultiClientMode()) {
+    tools.unshift(listClientsTool);
+  }
+  return { tools };
+});
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   try {
     let result;
     switch (name) {
+      case listClientsTool.name:
+        result = await listClientsTool.run(args);
+        break;
       case listTablesTool.name:
         result = await listTablesTool.run(args);
         break;
@@ -161,11 +195,12 @@ runServer().catch((error) => {
   process.exit(1);
 });
 
-// Wrap all tool handlers to ensure SQL connection before running
+// Wrap all tool handlers to ensure SQL connection before running, passing
+// through the caller's 'client' argument in multi-client mode.
 function wrapToolRun(tool: { run: (...args: any[]) => Promise<any> }) {
   const originalRun = tool.run.bind(tool);
   tool.run = async function (...args: any[]) {
-    await ensureSqlConnection();
+    await ensureSqlConnection(args[0]?.client);
     return originalRun(...args);
   };
 }

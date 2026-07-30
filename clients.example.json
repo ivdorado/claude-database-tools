@@ -1,0 +1,20 @@
+{
+  "clientA": {
+    "server": "clienta-sqlserver.database.windows.net",
+    "database": "ClientA_DB",
+    "user": "clienta_user",
+    "password": "clienta_password",
+    "port": 1433,
+    "encrypt": true,
+    "trustServerCertificate": false
+  },
+  "clientB": {
+    "server": "192.168.1.50",
+    "database": "ClientB_DB",
+    "user": "clientb_user",
+    "password": "clientb_password",
+    "port": 1433,
+    "encrypt": false,
+    "trustServerCertificate": true
+  }
+}
