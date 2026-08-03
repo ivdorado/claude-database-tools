@@ -16,7 +16,16 @@ let globalSqlPool: sql.ConnectionPool | null = null;
 // Identifies which client globalSqlPool is currently connected to. 'default'
 // is used for the single-client (.env-based) mode.
 let currentClientId: string | null = null;
-let deviceCodeCredential: DeviceCodeCredential | null = null;
+// Keyed by `${tenantId}:${clientId}` so each Azure AD app registration/tenant
+// combination (one per client in multi-client mode) gets its own cached
+// credential and MSAL token cache, instead of clients clobbering each other.
+const deviceCodeCredentials = new Map<string, DeviceCodeCredential>();
+// The device/user code + verification URL for a flow that's mid-flight,
+// resolved as soon as MSAL has requested it from Azure AD (fast — no wait for
+// the user to actually complete the browser login). Cleared once that login
+// settles (success or failure), so the next call starts a fresh flow.
+const pendingDeviceFlows = new Map<string, Promise<DeviceCodeInfo>>();
+const pendingDeviceFlowResolvers = new Map<string, (info: DeviceCodeInfo) => void>();
 
 // mssql deep-clones the connection config (via rfdc) before handing it to
 // tedious. rfdc only copies own enumerable properties and doesn't preserve
@@ -25,46 +34,113 @@ let deviceCodeCredential: DeviceCodeCredential | null = null;
 // plain object survives the clone since functions are copied by reference.
 const AZURE_SQL_SCOPE = 'https://database.windows.net/.default';
 
-async function getDeviceCodeCredential(): Promise<TokenCredential> {
-  if (!deviceCodeCredential) {
-    deviceCodeCredential = new DeviceCodeCredential({
-      tenantId: process.env.AZURE_TENANT_ID || undefined,
-      clientId: process.env.AZURE_CLIENT_ID || undefined,
+// Thrown instead of blocking a tool call for the whole MFA login. The MCP
+// tool handler surfaces this message as the tool's result text so Claude can
+// show the login URL/code directly in the chat; the caller is expected to
+// retry the same operation once they've completed the browser login.
+export class AuthPendingError extends Error {
+  constructor(info: DeviceCodeInfo) {
+    super(
+      `Autenticación con MFA requerida. Abre ${info.verificationUri} e introduce el código: ${info.userCode}. ` +
+      `Vuelve a intentar esta misma operación en cuanto termines de iniciar sesión.`
+    );
+    this.name = 'AuthPendingError';
+  }
+}
+
+function getOrCreateDeviceCodeCredential(key: string, tenantId?: string, clientId?: string): DeviceCodeCredential {
+  let credential = deviceCodeCredentials.get(key);
+  if (!credential) {
+    credential = new DeviceCodeCredential({
+      tenantId: tenantId || undefined,
+      clientId: clientId || undefined,
+      // Never let getToken() silently block on interactive login: a cache
+      // miss should fail fast so we can hand control back to the caller
+      // instead of hanging the whole MCP tool call on a human completing MFA.
+      disableAutomaticAuthentication: true,
       userPromptCallback: (info: DeviceCodeInfo) => {
         // Written to stderr: stdout is the MCP JSON-RPC channel.
         console.error(`\n[azure-ad] Autenticación con MFA requerida.`);
         console.error(`[azure-ad] Abre ${info.verificationUri} e introduce el código: ${info.userCode}\n`);
+        pendingDeviceFlowResolvers.get(key)?.(info);
       }
     });
+    deviceCodeCredentials.set(key, credential);
   }
-  const credential = deviceCodeCredential;
+  return credential;
+}
 
-  // tedious's connectionTimeout wraps the whole connection attempt,
-  // including the credential's getToken() call. A human completing a
-  // device-code + MFA login can easily take longer than that, so acquire
-  // (and let MSAL cache) the token here, unconstrained by connectionTimeout.
-  // The getToken() call tedious makes afterwards then resolves from cache.
-  await credential.getToken(AZURE_SQL_SCOPE);
+async function getDeviceCodeCredential(tenantId?: string, clientId?: string): Promise<TokenCredential> {
+  const key = `${tenantId ?? ''}:${clientId ?? ''}`;
+  const credential = getOrCreateDeviceCodeCredential(key, tenantId, clientId);
 
-  return { getToken: credential.getToken.bind(credential) };
+  // Fast path: a token is already cached from a previously completed login.
+  try {
+    await credential.getToken(AZURE_SQL_SCOPE);
+    return { getToken: credential.getToken.bind(credential) };
+  } catch {
+    // No cached token (or it's expired) — fall through to the interactive
+    // flow below instead of throwing this generic cache-miss error.
+  }
+
+  let infoPromise = pendingDeviceFlows.get(key);
+  if (!infoPromise) {
+    infoPromise = new Promise<DeviceCodeInfo>((resolve) => {
+      pendingDeviceFlowResolvers.set(key, resolve);
+    });
+    pendingDeviceFlows.set(key, infoPromise);
+
+    // authenticate() always allows the interactive prompt (unlike getToken(),
+    // which we've configured to never do so). Deliberately not awaited here:
+    // it runs in the background for as long as the user takes to complete
+    // the browser login, and this function returns as soon as the code/URL
+    // themselves are available.
+    credential.authenticate(AZURE_SQL_SCOPE)
+      .catch(() => {
+        // Surfaced to the caller on their next retry: getToken()'s cache
+        // check above will simply miss again and restart the flow.
+      })
+      .finally(() => {
+        pendingDeviceFlows.delete(key);
+        pendingDeviceFlowResolvers.delete(key);
+      });
+  }
+
+  const info = await infoPromise;
+  throw new AuthPendingError(info);
 }
 
 export async function getSqlConfig(clientId?: string): Promise<sql.config> {
   if (clientId) {
     const client = getClientConnectionConfig(clientId);
-    return {
+    const clientBaseConfig = {
       server: client.server,
       database: client.database,
       port: client.port ?? 1433,
-      user: client.user,
-      password: client.password,
       options: {
-        encrypt: client.encrypt ?? false,
+        // Azure SQL requires TLS regardless of the configured encrypt flag.
+        encrypt: client.authType === 'azure-ad-device-code' ? true : client.encrypt ?? false,
         trustServerCertificate: client.trustServerCertificate ?? false,
         enableArithAbort: true
       },
       connectionTimeout: parseInt(process.env.CONNECTION_TIMEOUT || '30') * 1000,
       requestTimeout: parseInt(process.env.REQUEST_TIMEOUT || '60') * 1000
+    };
+
+    if (client.authType === 'azure-ad-device-code') {
+      return {
+        ...clientBaseConfig,
+        authentication: {
+          type: 'token-credential',
+          options: { credential: await getDeviceCodeCredential(client.tenantId, client.clientId) }
+        }
+      } as sql.config;
+    }
+
+    return {
+      ...clientBaseConfig,
+      user: client.user,
+      password: client.password
     } as sql.config;
   }
 
@@ -89,7 +165,7 @@ export async function getSqlConfig(clientId?: string): Promise<sql.config> {
       ...baseConfig,
       authentication: {
         type: 'token-credential',
-        options: { credential: await getDeviceCodeCredential() }
+        options: { credential: await getDeviceCodeCredential(process.env.AZURE_TENANT_ID, process.env.AZURE_CLIENT_ID) }
       }
     } as sql.config;
   }
@@ -134,6 +210,9 @@ export async function closeSqlConnection(): Promise<void> {
   }
 }
 
+// Secure by default: writes are blocked unless READONLY_MODE is explicitly
+// set to 'false'. An unset/misspelled/missing env var must never accidentally
+// enable writes.
 export function isReadonlyMode(): boolean {
-  return process.env.READONLY_MODE === 'true';
+  return process.env.READONLY_MODE !== 'false';
 }

@@ -16,5 +16,19 @@
     "port": 1433,
     "encrypt": false,
     "trustServerCertificate": true
+  },
+  "clientMFA": {
+    "server": "clientmfa-sqlserver.database.windows.net",
+    "database": "ClientMFA_DB",
+    "authType": "azure-ad-device-code",
+    "port": 1433
+  },
+  "clientMFAWithTenant": {
+    "server": "clientmfawithtenant-sqlserver.database.windows.net",
+    "database": "ClientMFAWithTenant_DB",
+    "authType": "azure-ad-device-code",
+    "tenantId": "clientmfawithtenant-azure-tenant-id",
+    "clientId": "clientmfawithtenant-app-registration-client-id",
+    "port": 1433
   }
 }

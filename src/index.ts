@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 // Internal imports
-import { ensureSqlConnection } from "./core/connection.js";
+import { ensureSqlConnection, AuthPendingError, isReadonlyMode } from "./core/connection.js";
 import { isMultiClientMode } from "./core/clients.js";
 import { ListClientsTool } from "./tools/ListClientsTool.js";
 import { ListTablesTool } from "./tools/ListTablesTool.js";
@@ -57,9 +57,6 @@ const server = new Server(
   },
 );
 
-// Read READONLY env variable
-const isReadOnly = process.env.READONLY === "true";
-
 // In multi-client mode, every SQL-facing tool needs a 'client' argument so
 // the caller can pick which SQL Server instance to run against.
 function withClientParam(tool: any): any {
@@ -85,7 +82,10 @@ function withClientParam(tool: any): any {
 // Request handlers
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const sqlTools = isReadOnly
+  // Tools are advertised in lockstep with the enforcement in isReadonlyMode()
+  // (checked again inside each write operation), so the list Claude sees
+  // never promises a capability the server will actually refuse.
+  const sqlTools = isReadonlyMode()
     ? [listTablesTool, readDataTool, describeTableTool, getTableDdlTool, getTableAlterDdlTool]
     : [
         listTablesTool,
@@ -169,6 +169,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
   } catch (error) {
+    if (error instanceof AuthPendingError) {
+      // Not a real failure — surface the login instructions as plain text so
+      // Claude relays them to the user instead of reporting a tool error.
+      return {
+        content: [{ type: "text", text: error.message }],
+      };
+    }
     return {
       content: [{ type: "text", text: `Error occurred: ${error}` }],
       isError: true,

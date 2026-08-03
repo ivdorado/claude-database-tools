@@ -10,11 +10,16 @@ const CLIENTS_FILE = path.join(__dirname, '..', '..', 'clients.json');
 export interface ClientConnectionConfig {
   server: string;
   database: string;
-  user: string;
-  password: string;
   port?: number;
   encrypt?: boolean;
   trustServerCertificate?: boolean;
+  // 'sql' (default, requires user/password) or 'azure-ad-device-code' to force
+  // an interactive Azure AD login with MFA (requires tenantId/clientId instead).
+  authType?: 'sql' | 'azure-ad-device-code';
+  user?: string;
+  password?: string;
+  tenantId?: string;
+  clientId?: string;
 }
 
 let clientsCache: Record<string, ClientConnectionConfig> | null = null;

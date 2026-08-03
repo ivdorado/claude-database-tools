@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { isReadonlyMode } from '../../src/core/connection.js';
 
 /**
  * Tests for READONLY mode enforcement
@@ -97,34 +98,47 @@ describe('Readonly Mode Security', () => {
     });
   });
 
-  describe('Environment Variable Parsing', () => {
-    function isReadonlyMode(envValue: string | undefined): boolean {
-      return envValue === 'true';
-    }
+  describe('Environment Variable Parsing (real isReadonlyMode implementation)', () => {
+    const original = process.env.READONLY_MODE;
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env.READONLY_MODE;
+      } else {
+        process.env.READONLY_MODE = original;
+      }
+    });
 
     it('should be readonly when READONLY_MODE=true', () => {
-      expect(isReadonlyMode('true')).toBe(true);
+      process.env.READONLY_MODE = 'true';
+      expect(isReadonlyMode()).toBe(true);
     });
 
     it('should not be readonly when READONLY_MODE=false', () => {
-      expect(isReadonlyMode('false')).toBe(false);
+      process.env.READONLY_MODE = 'false';
+      expect(isReadonlyMode()).toBe(false);
     });
 
-    it('should not be readonly when READONLY_MODE is undefined', () => {
-      expect(isReadonlyMode(undefined)).toBe(false);
+    // Secure by default: only the literal string 'false' disables readonly.
+    // Anything else — unset, empty, misspelled, wrong case — must stay readonly.
+    it('should be readonly when READONLY_MODE is unset', () => {
+      delete process.env.READONLY_MODE;
+      expect(isReadonlyMode()).toBe(true);
     });
 
-    it('should not be readonly when READONLY_MODE is empty string', () => {
-      expect(isReadonlyMode('')).toBe(false);
+    it('should be readonly when READONLY_MODE is empty string', () => {
+      process.env.READONLY_MODE = '';
+      expect(isReadonlyMode()).toBe(true);
     });
 
-    it('should not be readonly when READONLY_MODE=TRUE (uppercase)', () => {
-      // Strict comparison means case-sensitive
-      expect(isReadonlyMode('TRUE')).toBe(false);
+    it('should be readonly when READONLY_MODE=FALSE (uppercase)', () => {
+      process.env.READONLY_MODE = 'FALSE';
+      expect(isReadonlyMode()).toBe(true);
     });
 
-    it('should not be readonly when READONLY_MODE=1', () => {
-      expect(isReadonlyMode('1')).toBe(false);
+    it('should be readonly when READONLY_MODE=0', () => {
+      process.env.READONLY_MODE = '0';
+      expect(isReadonlyMode()).toBe(true);
     });
   });
 

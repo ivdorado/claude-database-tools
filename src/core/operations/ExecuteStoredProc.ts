@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { OperationResult } from "../types.js";
+import { isReadonlyMode } from "../connection.js";
 
 export interface ExecuteStoredProcParams {
   procedureName: string;
@@ -9,6 +10,17 @@ export interface ExecuteStoredProcParams {
 export class ExecuteStoredProc {
   async execute(params: ExecuteStoredProcParams): Promise<OperationResult> {
     try {
+      // A stored procedure's body is opaque to us here — it can write, delete
+      // or drop just as easily as a raw INSERT/DELETE/DROP statement, so it
+      // must respect the same readonly gate as the other write operations.
+      if (isReadonlyMode()) {
+        return {
+          success: false,
+          message: "Operation denied: Database is in READONLY mode",
+          error: "READONLY_MODE"
+        };
+      }
+
       const { procedureName, parameters } = params;
 
       // Validate procedure name format

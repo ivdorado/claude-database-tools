@@ -130,7 +130,7 @@ Add to your `~/.claude/mcp.json`:
         "SQL_USER": "your-username",
         "SQL_PASSWORD": "your-password",
         "SQL_ENCRYPT": "true",
-        "READONLY": "true"
+        "READONLY_MODE": "true"
       }
     }
   }
@@ -141,14 +141,14 @@ Restart Claude Code to load the MCP server.
 
 ### Available MCP Tools
 
-**Read-Only** (available when `READONLY=true`):
+**Read-Only** (always available, and the only tools available by default — see [Security](#security)):
 - `list_tables` - List tables
 - `describe_table` - Get table schema
 - `read_data` - Execute SELECT queries
 - `get_table_ddl` - Generate CREATE TABLE DDL
 - `get_table_alter_ddl` - Generate ALTER TABLE DDL
 
-**Write** (requires `READONLY=false`):
+**Write** (only available when `READONLY_MODE` is explicitly set to `"false"`):
 - `insert_data` - Insert records
 - `update_data` - Update records
 - `delete_data` - Delete records
@@ -180,11 +180,27 @@ By default the MCP server connects to a single SQL Server instance configured vi
     "port": 1433,
     "encrypt": false,
     "trustServerCertificate": true
+  },
+  "clientC": {
+    "server": "clientc-sqlserver.database.windows.net",
+    "database": "ClientC_DB",
+    "authType": "azure-ad-device-code",
+    "port": 1433
+  },
+  "clientD": {
+    "server": "clientd-sqlserver.database.windows.net",
+    "database": "ClientD_DB",
+    "authType": "azure-ad-device-code",
+    "tenantId": "clientd-azure-tenant-id",
+    "clientId": "clientd-app-registration-client-id",
+    "port": 1433
   }
 }
 ```
 
 When `clients.json` exists and is non-empty, every SQL-facing tool gains a required `client` argument, and a new `list_clients` tool is exposed so Claude can discover which clients are configured. Claude will ask (or you can tell it) which client's database to query before running a tool.
+
+A client can force Azure AD login with MFA instead of SQL auth by setting `"authType": "azure-ad-device-code"` instead of `user`/`password` (`clientC` above); `encrypt` is then forced to `true` regardless of the configured value. `tenantId`/`clientId` are optional — omitted, `@azure/identity` falls back to the multi-tenant `organizations` endpoint and the public Azure CLI client ID, which works out of the box for most tenants. Set them explicitly (`clientD` above) when the signed-in user belongs to more than one tenant, or when Conditional Access policies require sign-in through your own Azure AD app registration. The server prints a verification URL and code to stderr the first time a given client is queried, same as the single-client `.env` flow (see `SQL_AUTH_TYPE` below). Each client's device-code login is cached independently, so switching between an MFA client and a SQL-auth client doesn't force a re-login.
 
 `clients.json` is gitignored — it holds plaintext credentials for every configured client, same as `.env`. This is a v1: the server keeps a single active connection and reconnects when the `client` argument changes, so it's meant for one conversation at a time, not concurrent multi-client traffic. A future iteration should move credentials to a secret store (e.g. Azure Key Vault) instead of a local file.
 
@@ -194,7 +210,7 @@ When `clients.json` exists and is non-empty, every SQL-facing tool gains a requi
 - **Parameterized Queries**: All INSERT/UPDATE/DELETE operations use parameterized queries
 - **WHERE Clause Required**: UPDATE and DELETE operations require WHERE clauses
 - **Query Limits**: Maximum query length of 10,000 characters, result sets limited to 10,000 records
-- **Read-Only Mode**: Set `READONLY=true` to disable write operations
+- **Read-Only by Default**: Writes (`insert_data`, `update_data`, `delete_data`, `create_table`, `create_index`, `drop_table`, `execute_stored_proc`) are blocked unless `READONLY_MODE` is explicitly set to `"false"` — an unset, misspelled, or missing value always means read-only, both in which tools are advertised to Claude and in each write operation's own check (so a direct tool call can't bypass it either)
 
 ## License
 
