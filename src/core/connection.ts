@@ -25,7 +25,7 @@ const deviceCodeCredentials = new Map<string, DeviceCodeCredential>();
 // the user to actually complete the browser login). Cleared once that login
 // settles (success or failure), so the next call starts a fresh flow.
 const pendingDeviceFlows = new Map<string, Promise<DeviceCodeInfo>>();
-const pendingDeviceFlowResolvers = new Map<string, (info: DeviceCodeInfo) => void>();
+const pendingDeviceFlowResolvers = new Map<string, { resolve: (info: DeviceCodeInfo) => void; reject: (err: unknown) => void }>();
 
 // mssql deep-clones the connection config (via rfdc) before handing it to
 // tedious. rfdc only copies own enumerable properties and doesn't preserve
@@ -34,14 +34,46 @@ const pendingDeviceFlowResolvers = new Map<string, (info: DeviceCodeInfo) => voi
 // plain object survives the clone since functions are copied by reference.
 const AZURE_SQL_SCOPE = 'https://database.windows.net/.default';
 
+// Device-code phishing relies on a URL/code showing up that the victim didn't
+// expect and can't verify. We can't fix "didn't expect" (that's inherent to
+// an MCP tool call), but we can and do verify the URL: MSAL is the only thing
+// that produces it, straight from Microsoft's own token endpoint, so pin it
+// to Microsoft's known device-login hosts and refuse to surface anything else.
+const TRUSTED_DEVICE_LOGIN_HOSTS = new Set([
+  'microsoft.com',
+  'login.microsoftonline.com',
+  'login.microsoft.com',
+  'login.windows.net',
+]);
+
+function assertTrustedVerificationHost(info: DeviceCodeInfo): void {
+  let hostname: string;
+  try {
+    hostname = new URL(info.verificationUri).hostname.toLowerCase();
+  } catch {
+    throw new Error(`Device-code flow returned an unparseable verification URL: ${info.verificationUri}`);
+  }
+  if (!TRUSTED_DEVICE_LOGIN_HOSTS.has(hostname)) {
+    throw new Error(
+      `Refusing to surface this device-code login: verification URL host '${hostname}' is not a ` +
+      `recognized Microsoft identity domain (expected one of ${[...TRUSTED_DEVICE_LOGIN_HOSTS].join(', ')}). ` +
+      `Do not open the URL or enter the code. This may indicate a compromised dependency.`
+    );
+  }
+}
+
 // Thrown instead of blocking a tool call for the whole MFA login. The MCP
 // tool handler surfaces this message as the tool's result text so Claude can
 // show the login URL/code directly in the chat; the caller is expected to
 // retry the same operation once they've completed the browser login.
 export class AuthPendingError extends Error {
-  constructor(info: DeviceCodeInfo) {
+  constructor(info: DeviceCodeInfo, label: string) {
     super(
-      `Autenticación con MFA requerida. Abre ${info.verificationUri} e introduce el código: ${info.userCode}. ` +
+      `Autenticación con MFA (Azure AD) requerida para el cliente '${label}'. ` +
+      `Este código y URL provienen directamente del endpoint oficial de device-code de Microsoft Entra ID ` +
+      `(vía el SDK @azure/identity, llamado en el propio proceso del servidor MCP local) — no los genera ` +
+      `este servidor MCP, y ya se ha verificado que el dominio de la URL pertenece a Microsoft antes de mostrarlo. ` +
+      `Abre ${info.verificationUri} e introduce el código: ${info.userCode}. ` +
       `Vuelve a intentar esta misma operación en cuanto termines de iniciar sesión.`
     );
     this.name = 'AuthPendingError';
@@ -59,10 +91,18 @@ function getOrCreateDeviceCodeCredential(key: string, tenantId?: string, clientI
       // instead of hanging the whole MCP tool call on a human completing MFA.
       disableAutomaticAuthentication: true,
       userPromptCallback: (info: DeviceCodeInfo) => {
+        const pending = pendingDeviceFlowResolvers.get(key);
+        try {
+          assertTrustedVerificationHost(info);
+        } catch (err) {
+          console.error(`[azure-ad] ${err instanceof Error ? err.message : err}`);
+          pending?.reject(err);
+          return;
+        }
         // Written to stderr: stdout is the MCP JSON-RPC channel.
         console.error(`\n[azure-ad] Autenticación con MFA requerida.`);
         console.error(`[azure-ad] Abre ${info.verificationUri} e introduce el código: ${info.userCode}\n`);
-        pendingDeviceFlowResolvers.get(key)?.(info);
+        pending?.resolve(info);
       }
     });
     deviceCodeCredentials.set(key, credential);
@@ -70,7 +110,7 @@ function getOrCreateDeviceCodeCredential(key: string, tenantId?: string, clientI
   return credential;
 }
 
-async function getDeviceCodeCredential(tenantId?: string, clientId?: string): Promise<TokenCredential> {
+async function getDeviceCodeCredential(tenantId?: string, clientId?: string, label = 'default'): Promise<TokenCredential> {
   const key = `${tenantId ?? ''}:${clientId ?? ''}`;
   const credential = getOrCreateDeviceCodeCredential(key, tenantId, clientId);
 
@@ -85,8 +125,8 @@ async function getDeviceCodeCredential(tenantId?: string, clientId?: string): Pr
 
   let infoPromise = pendingDeviceFlows.get(key);
   if (!infoPromise) {
-    infoPromise = new Promise<DeviceCodeInfo>((resolve) => {
-      pendingDeviceFlowResolvers.set(key, resolve);
+    infoPromise = new Promise<DeviceCodeInfo>((resolve, reject) => {
+      pendingDeviceFlowResolvers.set(key, { resolve, reject });
     });
     pendingDeviceFlows.set(key, infoPromise);
 
@@ -107,7 +147,7 @@ async function getDeviceCodeCredential(tenantId?: string, clientId?: string): Pr
   }
 
   const info = await infoPromise;
-  throw new AuthPendingError(info);
+  throw new AuthPendingError(info, label);
 }
 
 export async function getSqlConfig(clientId?: string): Promise<sql.config> {
@@ -132,7 +172,7 @@ export async function getSqlConfig(clientId?: string): Promise<sql.config> {
         ...clientBaseConfig,
         authentication: {
           type: 'token-credential',
-          options: { credential: await getDeviceCodeCredential(client.tenantId, client.clientId) }
+          options: { credential: await getDeviceCodeCredential(client.tenantId, client.clientId, clientId) }
         }
       } as sql.config;
     }
