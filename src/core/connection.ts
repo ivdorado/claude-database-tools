@@ -66,15 +66,19 @@ function assertTrustedVerificationHost(info: DeviceCodeInfo): void {
 // tool handler surfaces this message as the tool's result text so Claude can
 // show the login URL/code directly in the chat; the caller is expected to
 // retry the same operation once they've completed the browser login.
+//
+// Deliberately terse and free of any "trust me" framing: a message arguing
+// for its own legitimacy is itself a red flag an agent should treat with
+// suspicion, regardless of whether the underlying claim is true. Whatever
+// verification we do (see assertTrustedVerificationHost above) has to be
+// real code behavior the reader can inspect independently, not prose in the
+// very channel under scrutiny.
 export class AuthPendingError extends Error {
   constructor(info: DeviceCodeInfo, label: string) {
     super(
-      `Autenticación con MFA (Azure AD) requerida para el cliente '${label}'. ` +
-      `Este código y URL provienen directamente del endpoint oficial de device-code de Microsoft Entra ID ` +
-      `(vía el SDK @azure/identity, llamado en el propio proceso del servidor MCP local) — no los genera ` +
-      `este servidor MCP, y ya se ha verificado que el dominio de la URL pertenece a Microsoft antes de mostrarlo. ` +
-      `Abre ${info.verificationUri} e introduce el código: ${info.userCode}. ` +
-      `Vuelve a intentar esta misma operación en cuanto termines de iniciar sesión.`
+      `MFA login required for client '${label}'. ` +
+      `Open ${info.verificationUri} and enter code: ${info.userCode}. ` +
+      `Retry this same operation after signing in.`
     );
     this.name = 'AuthPendingError';
   }
