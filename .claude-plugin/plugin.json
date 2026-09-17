@@ -1,6 +1,6 @@
 {
   "name": "claude-database-tools",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SQL Server CLI and MCP server for Claude Code, with SQL-auth support, multi-client connections, and slash commands to add/edit/remove connections without hand-editing JSON.",
   "author": {
     "name": "cyronius"
