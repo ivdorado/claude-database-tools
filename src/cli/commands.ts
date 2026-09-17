@@ -12,8 +12,11 @@ import { CreateIndex } from '../core/operations/CreateIndex.js';
 import { GetTableDdl } from '../core/operations/GetTableDdl.js';
 import { GetTableAlterDdl } from '../core/operations/GetTableAlterDdl.js';
 import { formatOutput } from './formatters.js';
+import { registerClientCommands } from './clientCommands.js';
 
 export function registerCommands(program: Command): void {
+  registerClientCommands(program);
+
   // List Tables
   program
     .command('list-tables [schemas...]')

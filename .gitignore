@@ -4,12 +4,15 @@ node_modules/
 # Build output
 dist/
 
-# Environment files (contain credentials)
+# Environment files (contain credentials). Live convention now stores these
+# in a per-user config directory outside the repo (see README#Configuration);
+# these entries are just a backstop for anyone still using the pre-plugin
+# project-root layout.
 .env
 .env.local
 .env.*.local
 
-# Multi-client SQL connection config (contains credentials)
+# Multi-client SQL connection config (contains credentials) — same backstop.
 clients.json
 
 # IDE

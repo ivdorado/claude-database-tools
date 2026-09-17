@@ -1,16 +1,15 @@
 import sql from 'mssql';
 import * as dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { DeviceCodeCredential, type DeviceCodeInfo, type TokenCredential } from '@azure/identity';
 import { isMultiClientMode, getClientConnectionConfig } from './clients.js';
+import { ensureMigratedConfig, getEnvFilePath } from './paths.js';
 
-// Get the directory where this file is located
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Load .env from the project root (two levels up from core/)
-dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
+// Load the single-client default connection from the per-user config
+// directory (see paths.ts), not from the plugin's own install path — dotenv
+// only fills in vars that aren't already set, so real environment variables
+// (e.g. passed via .mcp.json's `env` block) still take priority.
+ensureMigratedConfig();
+dotenv.config({ path: getEnvFilePath() });
 
 let globalSqlPool: sql.ConnectionPool | null = null;
 // Identifies which client globalSqlPool is currently connected to. 'default'

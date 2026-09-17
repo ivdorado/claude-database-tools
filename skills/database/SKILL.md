@@ -7,6 +7,10 @@ description: Use this skill when working with SQL Server databases, creating tab
 
 This skill provides SQL Server database operations through CLI tools.
 
+All examples below use `sql-cli` for brevity. When running as an installed
+plugin, invoke the same commands as `node "${CLAUDE_PLUGIN_ROOT}/dist/cli/index.js" <command>...`
+instead, since `sql-cli` is only on PATH if it was separately `npm install -g`'d.
+
 ## Available Operations
 
 ### Read Operations
@@ -88,10 +92,41 @@ sql-cli get-ddl dbo.Users
 sql-cli get-alter-ddl dbo.Users
 ```
 
+## Managing Connections
+
+Connections are never stored inside the plugin — they live in a per-user
+config directory (Windows: `%APPDATA%\claude-database-tools`; macOS:
+`~/Library/Application Support/claude-database-tools`; Linux:
+`$XDG_CONFIG_HOME/claude-database-tools` or `~/.config/claude-database-tools`).
+Prefer the `/db-add-client`, `/db-edit-client`, `/db-remove-client`, and
+`/db-list-clients` slash commands over editing that JSON by hand — they wrap
+the CLI subcommands below and validate input before writing.
+
+### Multi-client connections (`clients.json`)
+```bash
+sql-cli client-list
+sql-cli client-show <clientId>
+sql-cli client-add <clientId> --server <server> --database <database> --user <user> --password <password>
+sql-cli client-add <clientId> --server <server> --database <database> --auth-type azure-ad-device-code [--tenant-id <id>] [--client-id <id>]
+sql-cli client-update <clientId> --database <newDatabase>
+sql-cli client-update <clientId> --unset tenantId clientId --user <user> --password <password>
+sql-cli client-remove <clientId> --confirm
+```
+When `clients.json` has at least one entry, every SQL-facing tool/command
+requires a `--client <clientId>` (CLI) or `client` (MCP tool) argument.
+
+### Single default connection (`.env`)
+Only used when no `--client`/`client` argument is given:
+```bash
+sql-cli default-show
+sql-cli default-set --server <server> --database <database> --user <user> --password <password>
+```
+
 ## Security Notes
 
 - SELECT queries are validated for dangerous SQL patterns
 - All write operations use parameterized queries
 - UPDATE and DELETE require WHERE clauses
 - Query results are limited to 10,000 records
-- Set `READONLY_MODE=true` in .env to disable write operations
+- Set `READONLY_MODE=true` in .env (or as an env var) to disable write operations
+- Connection credentials are stored in plaintext in the config directory above, same as before — never inside the plugin's own files

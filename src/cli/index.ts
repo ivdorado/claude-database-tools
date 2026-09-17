@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { ensureSqlConnection, closeSqlConnection } from '../core/connection.js';
 import { registerCommands } from './commands.js';
+import { CONFIG_COMMAND_NAMES } from './clientCommands.js';
 
 const program = new Command();
 
@@ -13,8 +14,13 @@ program
 // Register all commands
 registerCommands(program);
 
-// Connect to database before execution
-program.hook('preAction', async () => {
+// Connect to database before execution — except for the client/default
+// config commands, which only read or write local config files and must
+// work even when no connection is configured yet.
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  if (CONFIG_COMMAND_NAMES.includes(actionCommand.name())) {
+    return;
+  }
   try {
     await ensureSqlConnection();
   } catch (error) {

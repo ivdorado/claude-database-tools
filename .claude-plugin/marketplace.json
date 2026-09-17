@@ -1,0 +1,15 @@
+{
+  "name": "claude-database-tools",
+  "description": "Local marketplace for the claude-database-tools plugin (SQL Server CLI + MCP server).",
+  "owner": {
+    "name": "cyronius"
+  },
+  "plugins": [
+    {
+      "name": "claude-database-tools",
+      "description": "SQL Server CLI and MCP server for Claude Code, with SQL-auth support, multi-client connections, and slash commands to add/edit/remove connections without hand-editing JSON.",
+      "source": "./",
+      "category": "database"
+    }
+  ]
+}

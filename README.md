@@ -16,10 +16,16 @@ This project is an alternative to Microsoft's official [mssql MCP server](https:
 
 - **CLI Tool**: Command-line interface for SQL Server operations
 - **MCP Server**: Model Context Protocol server for Claude integration (experimental)
+- **Claude Code Plugin**: Installable plugin with a `database` skill and `/db-*` slash commands to manage connections
+- **Multi-Client**: Add/edit/remove any number of SQL Server/Azure SQL connections, stored outside the plugin in a per-user config directory
 - **Security**: Built-in SQL injection prevention and query validation
 - **Operations**: List tables, describe schemas, query data, insert/update/delete records, DDL generation
 
 ## Installation
+
+### As a Claude Code plugin (recommended)
+
+This repo is itself a Claude Code plugin (`.claude-plugin/plugin.json` + `.mcp.json`), including the `database` skill and the `/db-add-client`, `/db-edit-client`, `/db-remove-client`, `/db-list-clients` slash commands.
 
 ```bash
 git clone https://github.com/cyronius/claude-database-tools.git
@@ -28,25 +34,43 @@ npm install
 npm run build
 ```
 
+Then, from Claude Code:
+
+```
+/plugin marketplace add /path/to/claude-database-tools
+/plugin install claude-database-tools
+```
+
+Restart Claude Code. The MCP server, skill, and slash commands are all discovered automatically — no manual `~/.claude/mcp.json` editing needed.
+
+### As a standalone CLI
+
+Same clone/install/build steps as above; then use `sql-cli` as documented below without installing it as a plugin.
+
 ## Configuration
 
-Copy `.env.example` to `.env` and configure your database connection:
+Connection details are never stored inside this repo/plugin — they live in a per-user config directory, so reinstalling or updating the plugin never touches your credentials:
+
+| OS | Config directory |
+|----|-------------------|
+| Windows | `%APPDATA%\claude-database-tools` |
+| macOS | `~/Library/Application Support/claude-database-tools` |
+| Linux | `$XDG_CONFIG_HOME/claude-database-tools` (or `~/.config/claude-database-tools`) |
+
+Override with the `CLAUDE_DB_TOOLS_HOME` environment variable if you want a different location.
+
+If you have an older `clients.json`/`.env` sitting at the project root from before this became a plugin, the first CLI/MCP invocation copies it into the new location automatically (and tells you where, on stderr) — the old file is no longer read afterwards and can be deleted.
+
+### Single default connection
+
+Manage it with the CLI instead of hand-editing a file:
 
 ```bash
-cp .env.example .env
+node dist/cli/index.js default-set --server localhost --database your_database --user your_username --password your_password
+node dist/cli/index.js default-show
 ```
 
-Edit `.env` with your SQL Server credentials:
-
-```
-SQL_SERVER=localhost
-SQL_DATABASE=your_database
-SQL_USER=your_username
-SQL_PASSWORD=your_password
-SQL_PORT=1433
-SQL_ENCRYPT=false
-SQL_TRUST_SERVER_CERTIFICATE=true
-```
+This writes `SQL_SERVER`/`SQL_DATABASE`/`SQL_USER`/`SQL_PASSWORD`/etc. to `<config dir>/.env`. `.env.example` at the repo root documents every supported key if you'd rather edit that file by hand at `<config dir>/.env` directly. `READONLY_MODE` and the timeout settings live in the same file.
 
 ## CLI Usage
 
@@ -79,6 +103,13 @@ sql-cli <command> [options]
 | `create-index <tableName> <indexName> <columns>` | Create an index |
 | `get-ddl <tableName>` | Generate CREATE TABLE DDL |
 | `get-alter-ddl <tableName>` | Generate ALTER TABLE DDL |
+| `client-list` | List configured multi-client connection ids |
+| `client-show <clientId>` | Show a client's config (password masked) |
+| `client-add <clientId> [options]` | Add a multi-client connection ([Multi-Client Mode](#multi-client-mode)) |
+| `client-update <clientId> [options]` | Update fields on an existing multi-client connection |
+| `client-remove <clientId> --confirm` | Remove a multi-client connection |
+| `default-show` | Show the single default connection (password masked) |
+| `default-set [options]` | Set the single default connection ([Configuration](#configuration)) |
 
 ### Examples
 
@@ -116,28 +147,22 @@ The MCP server allows Claude Code to interact with your SQL Server database dire
 
 ### Setup
 
-Add to your `~/.claude/mcp.json`:
+If installed as a plugin (see [Installation](#installation)), the server starts automatically from this repo's own `.mcp.json` — nothing to configure. Credentials come from the config directory described above (`default-set`/`client-add`), not from `.mcp.json`.
+
+To wire it up manually instead (e.g. without the plugin), add to your `~/.claude/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "mssql": {
       "command": "node",
-      "args": ["/path/to/claude-database-tools/dist/index.js"],
-      "env": {
-        "SQL_SERVER": "your-server",
-        "SQL_DATABASE": "your-database",
-        "SQL_USER": "your-username",
-        "SQL_PASSWORD": "your-password",
-        "SQL_ENCRYPT": "true",
-        "READONLY_MODE": "true"
-      }
+      "args": ["/path/to/claude-database-tools/dist/index.js"]
     }
   }
 }
 ```
 
-Restart Claude Code to load the MCP server.
+Restart Claude Code to load the MCP server. `READONLY_MODE` and connection settings are still read from `<config dir>/.env` (see [Configuration](#configuration)); set them there rather than in `mcp.json`'s `env` block, or override in the `env` block if you'd rather not manage a separate file for this one variable.
 
 ### Available MCP Tools
 
@@ -159,50 +184,31 @@ Restart Claude Code to load the MCP server.
 
 ### Multi-Client Mode
 
-By default the MCP server connects to a single SQL Server instance configured via `.env`/environment variables. To let one MCP server multiplex between several clients' SQL Server/Azure SQL instances, create a `clients.json` in the project root (copy `clients.example.json`):
+By default the MCP server connects to a single SQL Server instance configured via the default `.env`/environment variables. To let one MCP server multiplex between several clients' SQL Server/Azure SQL instances, add entries to `clients.json` — via the CLI or, if installed as a plugin, the `/db-add-client`, `/db-edit-client`, `/db-remove-client`, `/db-list-clients` slash commands, rather than hand-editing the file:
 
-```json
-{
-  "clientA": {
-    "server": "clienta-sqlserver.database.windows.net",
-    "database": "ClientA_DB",
-    "user": "clienta_user",
-    "password": "clienta_password",
-    "port": 1433,
-    "encrypt": true,
-    "trustServerCertificate": false
-  },
-  "clientB": {
-    "server": "192.168.1.50",
-    "database": "ClientB_DB",
-    "user": "clientb_user",
-    "password": "clientb_password",
-    "port": 1433,
-    "encrypt": false,
-    "trustServerCertificate": true
-  },
-  "clientC": {
-    "server": "clientc-sqlserver.database.windows.net",
-    "database": "ClientC_DB",
-    "authType": "azure-ad-device-code",
-    "port": 1433
-  },
-  "clientD": {
-    "server": "clientd-sqlserver.database.windows.net",
-    "database": "ClientD_DB",
-    "authType": "azure-ad-device-code",
-    "tenantId": "clientd-azure-tenant-id",
-    "clientId": "clientd-app-registration-client-id",
-    "port": 1433
-  }
-}
+```bash
+# SQL auth
+node dist/cli/index.js client-add clientA --server clienta-sqlserver.database.windows.net --database ClientA_DB --user clienta_user --password clienta_password --port 1433 --encrypt
+
+# Azure AD with MFA (device code), default tenant/app registration
+node dist/cli/index.js client-add clientC --server clientc-sqlserver.database.windows.net --database ClientC_DB --auth-type azure-ad-device-code
+
+# Azure AD with MFA, explicit tenant/app registration
+node dist/cli/index.js client-add clientD --server clientd-sqlserver.database.windows.net --database ClientD_DB --auth-type azure-ad-device-code --tenant-id clientd-azure-tenant-id --client-id clientd-app-registration-client-id
+
+node dist/cli/index.js client-list
+node dist/cli/index.js client-show clientA
+node dist/cli/index.js client-update clientA --database ClientA_DB_v2
+node dist/cli/index.js client-remove clientA --confirm
 ```
+
+`clients.example.json` at the repo root still documents the on-disk shape if you'd rather edit `<config dir>/clients.json` (see [Configuration](#configuration)) by hand.
 
 When `clients.json` exists and is non-empty, every SQL-facing tool gains a required `client` argument, and a new `list_clients` tool is exposed so Claude can discover which clients are configured. Claude will ask (or you can tell it) which client's database to query before running a tool.
 
-A client can force Azure AD login with MFA instead of SQL auth by setting `"authType": "azure-ad-device-code"` instead of `user`/`password` (`clientC` above); `encrypt` is then forced to `true` regardless of the configured value. `tenantId`/`clientId` are optional — omitted, `@azure/identity` falls back to the multi-tenant `organizations` endpoint and the public Azure CLI client ID, which works out of the box for most tenants. Set them explicitly (`clientD` above) when the signed-in user belongs to more than one tenant, or when Conditional Access policies require sign-in through your own Azure AD app registration. The server prints a verification URL and code to stderr the first time a given client is queried, same as the single-client `.env` flow (see `SQL_AUTH_TYPE` below). Each client's device-code login is cached independently, so switching between an MFA client and a SQL-auth client doesn't force a re-login.
+A client can force Azure AD login with MFA instead of SQL auth via `--auth-type azure-ad-device-code` instead of `--user`/`--password` (`clientC`/`clientD` above); `encrypt` is then forced to `true` regardless of the configured value. `--tenant-id`/`--client-id` are optional — omitted, `@azure/identity` falls back to the multi-tenant `organizations` endpoint and the public Azure CLI client ID, which works out of the box for most tenants. Set them explicitly (`clientD` above) when the signed-in user belongs to more than one tenant, or when Conditional Access policies require sign-in through your own Azure AD app registration. The server prints a verification URL and code to stderr the first time a given client is queried, same as the single-client `.env` flow (see `SQL_AUTH_TYPE` below). Each client's device-code login is cached independently, so switching between an MFA client and a SQL-auth client doesn't force a re-login.
 
-`clients.json` is gitignored — it holds plaintext credentials for every configured client, same as `.env`. This is a v1: the server keeps a single active connection and reconnects when the `client` argument changes, so it's meant for one conversation at a time, not concurrent multi-client traffic. A future iteration should move credentials to a secret store (e.g. Azure Key Vault) instead of a local file.
+`clients.json` lives outside the repo/plugin entirely (see [Configuration](#configuration)) and holds plaintext credentials for every configured client, same as `.env`. This is a v1: the server keeps a single active connection and reconnects when the `client` argument changes, so it's meant for one conversation at a time, not concurrent multi-client traffic. A future iteration should move credentials to a secret store (e.g. Azure Key Vault) instead of a local file.
 
 ## Security
 

@@ -1,11 +1,5 @@
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const CLIENTS_FILE = path.join(__dirname, '..', '..', 'clients.json');
+import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { ensureConfigDir, ensureMigratedConfig, getClientsFilePath } from './paths.js';
 
 export interface ClientConnectionConfig {
   server: string;
@@ -29,14 +23,38 @@ function loadClients(): Record<string, ClientConnectionConfig> {
     return clientsCache;
   }
 
-  if (!existsSync(CLIENTS_FILE)) {
+  ensureMigratedConfig();
+
+  const file = getClientsFilePath();
+  if (!existsSync(file)) {
     clientsCache = {};
     return clientsCache;
   }
 
-  const raw = readFileSync(CLIENTS_FILE, 'utf-8');
+  const raw = readFileSync(file, 'utf-8');
   clientsCache = JSON.parse(raw);
   return clientsCache!;
+}
+
+function persistClients(clients: Record<string, ClientConnectionConfig>): void {
+  ensureConfigDir();
+  writeFileSync(getClientsFilePath(), JSON.stringify(clients, null, 2) + '\n', 'utf-8');
+  clientsCache = clients;
+}
+
+function validateClientConfig(config: ClientConnectionConfig): void {
+  if (!config.server) {
+    throw new Error("'server' is required");
+  }
+  if (!config.database) {
+    throw new Error("'database' is required");
+  }
+  if (config.authType === 'azure-ad-device-code') {
+    return;
+  }
+  if (!config.user || !config.password) {
+    throw new Error("'user' and 'password' are required unless authType is 'azure-ad-device-code'");
+  }
 }
 
 // Multi-client mode only activates when clients.json exists, so single-client
@@ -58,4 +76,50 @@ export function getClientConnectionConfig(clientId: string): ClientConnectionCon
     );
   }
   return config;
+}
+
+export function getClientsFileLocation(): string {
+  return getClientsFilePath();
+}
+
+export function addClient(clientId: string, config: ClientConnectionConfig): void {
+  const clients = loadClients();
+  if (clients[clientId]) {
+    throw new Error(`Client '${clientId}' already exists. Use 'client-update' to modify it.`);
+  }
+  validateClientConfig(config);
+  persistClients({ ...clients, [clientId]: config });
+}
+
+// Shallow-merges patch onto the existing config. Keys in `unset` are deleted
+// first, so switching auth modes (e.g. dropping tenantId/clientId when going
+// back to SQL auth) doesn't leave stale fields behind.
+export function updateClient(
+  clientId: string,
+  patch: Partial<ClientConnectionConfig>,
+  unset: (keyof ClientConnectionConfig)[] = []
+): ClientConnectionConfig {
+  const clients = loadClients();
+  const existing = clients[clientId];
+  if (!existing) {
+    throw new Error(`Unknown client '${clientId}'. Configured clients: ${Object.keys(clients).join(', ') || '(none)'}`);
+  }
+  const merged: ClientConnectionConfig = { ...existing };
+  for (const key of unset) {
+    delete merged[key];
+  }
+  Object.assign(merged, patch);
+  validateClientConfig(merged);
+  persistClients({ ...clients, [clientId]: merged });
+  return merged;
+}
+
+export function removeClient(clientId: string): void {
+  const clients = loadClients();
+  if (!clients[clientId]) {
+    throw new Error(`Unknown client '${clientId}'. Configured clients: ${Object.keys(clients).join(', ') || '(none)'}`);
+  }
+  const rest = { ...clients };
+  delete rest[clientId];
+  persistClients(rest);
 }
