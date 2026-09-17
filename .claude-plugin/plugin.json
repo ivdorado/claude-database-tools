@@ -5,8 +5,8 @@
   "author": {
     "name": "cyronius"
   },
-  "homepage": "https://github.com/cyronius/claude-database-tools",
-  "repository": "https://github.com/cyronius/claude-database-tools",
+  "homepage": "https://github.com/ivdorado/claude-database-tools",
+  "repository": "https://github.com/ivdorado/claude-database-tools",
   "license": "MIT",
   "keywords": ["sql-server", "mssql", "database", "mcp", "cli"]
 }

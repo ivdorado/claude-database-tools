@@ -41,7 +41,7 @@ This repo started as a fork of the upstream project above. Since then it has div
 This repo is itself a Claude Code plugin (`.claude-plugin/plugin.json` + `.mcp.json`), including the `database` skill and the `/db-add-client`, `/db-edit-client`, `/db-remove-client`, `/db-list-clients` slash commands.
 
 ```bash
-git clone https://github.com/cyronius/claude-database-tools.git
+git clone https://github.com/ivdorado/claude-database-tools.git
 cd claude-database-tools
 npm install
 npm run build
