@@ -12,6 +12,19 @@ This project is an alternative to Microsoft's official [mssql MCP server](https:
 
 - **MCP Server Included**: Also provides an MCP server if you prefer that integration approach.
 
+### What This Fork Adds Over [`cyronius/claude-database-tools`](https://github.com/cyronius/claude-database-tools)
+
+This repo started as a fork of the upstream project above. Since then it has diverged into:
+
+| Area | Upstream | This fork |
+|------|----------|-----------|
+| Auth | SQL auth only (username/password) | + Azure AD/Entra ID login with MFA (`azure-ad-device-code`), per client, with device-code verification-URL host allowlisting against phishing |
+| Connections | One connection via `.env` | Multi-client mode (`clients.json`): any number of SQL Server/Azure SQL connections, selected per tool call via a `client` argument, plus a `list_clients` discovery tool |
+| Read-only default | `READONLY` — behavior when unset/misconfigured isn't specified | `READONLY_MODE` fails closed: writes are blocked unless it's explicitly set to `"false"`, checked both in tool advertisement and in each write operation |
+| Credential storage | `.env` inside the cloned repo itself | Per-user config directory outside the plugin/repo (`%APPDATA%`, `~/Library/Application Support`, or `$XDG_CONFIG_HOME`), auto-migrated from the old location, locked to the OS user (`chmod`/`icacls`), with an optional `passwordEnv` indirection so `clients.json` never has to hold the literal password |
+| Packaging | Manual clone + build + hand-edit `~/.claude/mcp.json` | Installable Claude Code plugin (`.claude-plugin/plugin.json` + `.mcp.json`) with a `database` skill and `/db-add-client`, `/db-edit-client`, `/db-remove-client`, `/db-list-clients` slash commands |
+| Test coverage | Core CLI/MCP/security suite | + dedicated suites for multi-client config and config-directory permissions |
+
 ## Features
 
 - **CLI Tool**: Command-line interface for SQL Server operations
@@ -60,6 +73,8 @@ Connection details are never stored inside this repo/plugin — they live in a p
 Override with the `CLAUDE_DB_TOOLS_HOME` environment variable if you want a different location.
 
 If you have an older `clients.json`/`.env` sitting at the project root from before this became a plugin, the first CLI/MCP invocation copies it into the new location automatically (and tells you where, on stderr) — the old file is no longer read afterwards and can be deleted.
+
+The config directory and both files are locked down to the current OS user on every write (`chmod 700`/`600` on macOS/Linux, an `icacls` ACL reset on Windows) so other local accounts can't read your credentials. This is best-effort: it never blocks reading/writing config if it fails (e.g. an unusual ACL policy), and it doesn't protect against another process running as your own account.
 
 ### Single default connection
 
@@ -209,6 +224,14 @@ When `clients.json` exists and is non-empty, every SQL-facing tool gains a requi
 A client can force Azure AD login with MFA instead of SQL auth via `--auth-type azure-ad-device-code` instead of `--user`/`--password` (`clientC`/`clientD` above); `encrypt` is then forced to `true` regardless of the configured value. `--tenant-id`/`--client-id` are optional — omitted, `@azure/identity` falls back to the multi-tenant `organizations` endpoint and the public Azure CLI client ID, which works out of the box for most tenants. Set them explicitly (`clientD` above) when the signed-in user belongs to more than one tenant, or when Conditional Access policies require sign-in through your own Azure AD app registration. The server prints a verification URL and code to stderr the first time a given client is queried, same as the single-client `.env` flow (see `SQL_AUTH_TYPE` below). Each client's device-code login is cached independently, so switching between an MFA client and a SQL-auth client doesn't force a re-login.
 
 `clients.json` lives outside the repo/plugin entirely (see [Configuration](#configuration)) and holds plaintext credentials for every configured client, same as `.env`. This is a v1: the server keeps a single active connection and reconnects when the `client` argument changes, so it's meant for one conversation at a time, not concurrent multi-client traffic. A future iteration should move credentials to a secret store (e.g. Azure Key Vault) instead of a local file.
+
+To avoid putting a password in `clients.json` at all, set `--password-env <VAR>` instead of `--password` when adding/updating a client — the config then stores only the variable's name, and the actual value is read from that environment variable at connection time:
+
+```bash
+node dist/cli/index.js client-add clientA --server clienta-sqlserver.database.windows.net --database ClientA_DB --user clienta_user --password-env CLIENTA_SQL_PASSWORD --port 1433 --encrypt
+```
+
+`--password` and `--password-env` are mutually exclusive. Switching a client from one to the other requires `--unset` for whichever field you're dropping (e.g. `client-update clientA --password-env CLIENTA_SQL_PASSWORD --unset password`).
 
 ## Security
 

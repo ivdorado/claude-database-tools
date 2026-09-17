@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -47,5 +47,19 @@ describe('paths', () => {
     const { ensureMigratedConfig, getClientsFilePath } = await import('../../src/core/paths.js');
     ensureMigratedConfig();
     expect(JSON.parse(readFileSync(getClientsFilePath(), 'utf-8'))).toEqual({ kept: true });
+  });
+
+  it('ensureConfigDir locks the directory down to the owner (POSIX)', async () => {
+    if (process.platform === 'win32') return;
+    const { ensureConfigDir, getConfigDir } = await import('../../src/core/paths.js');
+    rmSync(tmpHome, { recursive: true, force: true });
+    ensureConfigDir();
+    const mode = statSync(getConfigDir()).mode & 0o777;
+    expect(mode).toBe(0o700);
+  });
+
+  it('restrictToOwner never throws, even for a nonexistent path', async () => {
+    const { restrictToOwner } = await import('../../src/core/paths.js');
+    expect(() => restrictToOwner(path.join(tmpHome, 'does-not-exist'))).not.toThrow();
   });
 });

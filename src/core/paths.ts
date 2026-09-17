@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, copyFileSync, chmodSync } from 'fs';
+import { execFileSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -40,7 +41,29 @@ export function getConfigDir(): string {
 }
 
 export function ensureConfigDir(): void {
-  mkdirSync(getConfigDir(), { recursive: true });
+  const dir = getConfigDir();
+  mkdirSync(dir, { recursive: true });
+  restrictToOwner(dir, true);
+}
+
+// Best-effort lockdown of a config file/dir to the current OS user, since
+// clients.json/.env hold plaintext credentials. POSIX: a plain chmod. On
+// Windows, chmod only flips the read-only attribute rather than touching
+// ACLs, so icacls is used instead to drop inherited permissions and grant
+// only the current account. Never throws — a restrictive umask, a locked-
+// down icacls policy, or running as a user icacls can't resolve shouldn't
+// block reading/writing config, so failures are just logged to stderr.
+export function restrictToOwner(targetPath: string, isDirectory = false): void {
+  try {
+    if (process.platform === 'win32') {
+      const username = os.userInfo().username;
+      execFileSync('icacls', [targetPath, '/inheritance:r', '/grant:r', `${username}:F`], { stdio: 'ignore' });
+    } else {
+      chmodSync(targetPath, isDirectory ? 0o700 : 0o600);
+    }
+  } catch (error) {
+    console.error(`[claude-database-tools] Could not restrict permissions on '${targetPath}': ${error}`);
+  }
 }
 
 export function getClientsFilePath(): string {
@@ -59,6 +82,7 @@ function migrateLegacyFile(oldPath: string, newPath: string, label: string): voi
   }
   ensureConfigDir();
   copyFileSync(oldPath, newPath);
+  restrictToOwner(newPath);
   console.error(
     `[claude-database-tools] Migrated ${label} from '${oldPath}' to '${newPath}'. ` +
     `The old file is no longer read from here and can be deleted.`

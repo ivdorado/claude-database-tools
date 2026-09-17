@@ -1,7 +1,7 @@
 import sql from 'mssql';
 import * as dotenv from 'dotenv';
 import { DeviceCodeCredential, type DeviceCodeInfo, type TokenCredential } from '@azure/identity';
-import { isMultiClientMode, getClientConnectionConfig } from './clients.js';
+import { isMultiClientMode, getClientConnectionConfig, resolveClientPassword } from './clients.js';
 import { ensureMigratedConfig, getEnvFilePath } from './paths.js';
 
 // Load the single-client default connection from the per-user config
@@ -183,7 +183,7 @@ export async function getSqlConfig(clientId?: string): Promise<sql.config> {
     return {
       ...clientBaseConfig,
       user: client.user,
-      password: client.password
+      password: resolveClientPassword(client)
     } as sql.config;
   }
 

@@ -17,6 +17,15 @@
     "encrypt": false,
     "trustServerCertificate": true
   },
+  "clientEnvPassword": {
+    "server": "clientenvpassword-sqlserver.database.windows.net",
+    "database": "ClientEnvPassword_DB",
+    "user": "clientenvpassword_user",
+    "passwordEnv": "CLIENTENVPASSWORD_SQL_PASSWORD",
+    "port": 1433,
+    "encrypt": true,
+    "trustServerCertificate": false
+  },
   "clientMFA": {
     "server": "clientmfa-sqlserver.database.windows.net",
     "database": "ClientMFA_DB",

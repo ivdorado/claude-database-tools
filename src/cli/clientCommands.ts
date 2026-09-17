@@ -10,7 +10,7 @@ import {
   updateClient,
   type ClientConnectionConfig,
 } from '../core/clients.js';
-import { ensureConfigDir, ensureMigratedConfig, getEnvFilePath } from '../core/paths.js';
+import { ensureConfigDir, ensureMigratedConfig, getEnvFilePath, restrictToOwner } from '../core/paths.js';
 import { formatOutput } from './formatters.js';
 
 // Command names handled in this file — the CLI's preAction hook skips
@@ -31,6 +31,7 @@ interface ConnectionOptions {
   database?: string;
   user?: string;
   password?: string;
+  passwordEnv?: string;
   port?: string;
   encrypt?: boolean;
   trustServerCertificate?: boolean;
@@ -46,6 +47,7 @@ function addConnectionOptions(cmd: Command): Command {
     .option('--database <database>', 'Database name')
     .option('--user <user>', 'SQL auth username')
     .option('--password <password>', 'SQL auth password')
+    .option('--password-env <var>', 'Name of an env var holding the SQL auth password (alternative to --password, keeps it out of clients.json)')
     .option('--port <port>', 'TCP port (default 1433)')
     .option('--encrypt', 'Enable TLS encryption')
     .option('--trust-server-certificate', 'Trust a self-signed/untrusted server certificate')
@@ -79,11 +81,18 @@ function buildFullConfig(opts: ConnectionOptions): ClientConnectionConfig {
     if (opts.tenantId) config.tenantId = opts.tenantId;
     if (opts.clientId) config.clientId = opts.clientId;
   } else {
-    if (!opts.user || !opts.password) {
-      throw new Error("'--user' and '--password' are required unless '--auth-type azure-ad-device-code' is set");
+    if (opts.password && opts.passwordEnv) {
+      throw new Error("Specify only one of '--password' or '--password-env', not both");
+    }
+    if (!opts.user || (!opts.password && !opts.passwordEnv)) {
+      throw new Error("'--user' and either '--password' or '--password-env' are required unless '--auth-type azure-ad-device-code' is set");
     }
     config.user = opts.user;
-    config.password = opts.password;
+    if (opts.passwordEnv) {
+      config.passwordEnv = opts.passwordEnv;
+    } else {
+      config.password = opts.password;
+    }
   }
   return config;
 }
@@ -94,6 +103,7 @@ function buildPatch(opts: ConnectionOptions): Partial<ClientConnectionConfig> {
   if (opts.database !== undefined) patch.database = opts.database;
   if (opts.user !== undefined) patch.user = opts.user;
   if (opts.password !== undefined) patch.password = opts.password;
+  if (opts.passwordEnv !== undefined) patch.passwordEnv = opts.passwordEnv;
   if (opts.port !== undefined) patch.port = parsePort(opts.port);
   if (opts.encrypt !== undefined) patch.encrypt = opts.encrypt;
   if (opts.trustServerCertificate !== undefined) patch.trustServerCertificate = opts.trustServerCertificate;
@@ -257,6 +267,7 @@ export function registerClientCommands(program: Command): void {
       }
       const lines = Object.entries(updated).map(([key, value]) => `${key}=${value}`);
       writeFileSync(file, lines.join('\n') + '\n', 'utf-8');
+      restrictToOwner(file);
       formatOutput({
         success: true,
         message: `Wrote default connection to ${file}.`,

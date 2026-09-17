@@ -56,6 +56,49 @@ describe('clients', () => {
     expect(() => clients.getClientConnectionConfig('missing')).toThrow(/Unknown client/);
   });
 
+  it('adds a SQL-auth client with passwordEnv instead of password', () => {
+    clients.addClient('acme', { server: 's', database: 'd', user: 'u', passwordEnv: 'ACME_PW' });
+    expect(clients.getClientConnectionConfig('acme')).toEqual({ server: 's', database: 'd', user: 'u', passwordEnv: 'ACME_PW' });
+  });
+
+  it('rejects a client with both password and passwordEnv', () => {
+    expect(() =>
+      clients.addClient('acme', { server: 's', database: 'd', user: 'u', password: 'p', passwordEnv: 'ACME_PW' })
+    ).toThrow(/only one of/i);
+  });
+
+  it('rejects a client missing both password and passwordEnv', () => {
+    expect(() => clients.addClient('acme', { server: 's', database: 'd', user: 'u' })).toThrow(/user.*password/i);
+  });
+
+  describe('resolveClientPassword', () => {
+    const originalEnv = process.env.ACME_PW;
+
+    afterEach(() => {
+      if (originalEnv === undefined) {
+        delete process.env.ACME_PW;
+      } else {
+        process.env.ACME_PW = originalEnv;
+      }
+    });
+
+    it('returns the literal password when set', () => {
+      expect(clients.resolveClientPassword({ server: 's', database: 'd', user: 'u', password: 'p' })).toBe('p');
+    });
+
+    it('reads the password from the referenced env var', () => {
+      process.env.ACME_PW = 'from-env';
+      expect(clients.resolveClientPassword({ server: 's', database: 'd', user: 'u', passwordEnv: 'ACME_PW' })).toBe('from-env');
+    });
+
+    it('throws when the referenced env var is not set', () => {
+      delete process.env.ACME_PW;
+      expect(() =>
+        clients.resolveClientPassword({ server: 's', database: 'd', user: 'u', passwordEnv: 'ACME_PW' })
+      ).toThrow(/ACME_PW.*not set/);
+    });
+  });
+
   it('updates only the given fields, leaving the rest untouched', () => {
     clients.addClient('acme', { server: 's', database: 'd', user: 'u', password: 'p', port: 1433 });
     const updated = clients.updateClient('acme', { database: 'd2' });
